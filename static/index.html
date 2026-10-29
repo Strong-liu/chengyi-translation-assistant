@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>橙意翻译助手 · 论文 PDF 翻译</title>
+  <link rel="icon" type="image/x-icon" href="/static/branding/app.ico">
+  <link rel="apple-touch-icon" href="/static/branding/app-icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="橙意翻译助手首页"><img class="brand-icon" src="/static/branding/app-icon.png" width="38" height="38" alt=""><span>橙意翻译助手<small>论文 PDF 翻译</small></span></a>
+      <div class="topbar-actions"><span class="local-badge"><i></i> 本机运行</span><button class="quiet-button" id="open-settings" type="button" aria-controls="settings-panel">翻译设置</button></div>
+    </header>
+
+    <section class="intro">
+      <p class="eyebrow" id="service-eyebrow">PDFMathTranslate · 百度大模型翻译</p>
+      <h1>读中文译文，保留英文专名。</h1>
+      <p class="intro-description">上传论文，核对保留英文的词条，下载中文和中英对照 PDF。</p>
+      <div class="feature-row"><span>作者与期刊名</span><span>模型与方法名</span><span>图表与公式排版</span></div>
+    </section>
+
+    <details class="settings-panel" id="settings-panel">
+      <summary><span class="section-title">百度翻译设置</span><span class="connection-badge" id="settings-badge">正在读取配置…</span></summary>
+      <div class="settings-content">
+        <p class="settings-help" id="service-help">使用百度翻译开放平台的 API Key，按学术阅读风格翻译；英文专名由本机术语清单保护。免费额度需满足百度账户认证与开通条件，以控制台权益为准，并非无限免费。<a href="https://fanyi-api.baidu.com/product/13" target="_blank" rel="noopener noreferrer">查看大模型文本翻译说明 ↗</a></p>
+        <form id="settings-form" autocomplete="off">
+          <label class="field-label mode-field" for="service-mode">翻译服务<select id="service-mode" name="service_mode"><option value="llm" selected>百度大模型翻译 · 学术风格（API Key）</option><option value="academic">高级：学术论文领域 API（APPID + 密钥）</option></select></label>
+          <div id="llm-credentials" class="credential-panel">
+            <label class="field-label" for="api-key">API Key<input id="api-key" name="api_key" type="password" autocomplete="new-password" maxlength="1024" placeholder="填写百度大模型文本翻译 API Key"></label>
+          </div>
+          <div class="settings-grid credential-panel" id="academic-credentials" hidden>
+            <label class="field-label" for="app-id">APPID<input id="app-id" name="app_id" type="text" spellcheck="false" autocomplete="off" maxlength="100" placeholder="填写学术论文领域 API 的 APPID"></label>
+            <label class="field-label" for="api-secret">密钥<input id="api-secret" name="secret" type="password" autocomplete="new-password" maxlength="256" placeholder="仅在本机保存，不会在页面回显"></label>
+          </div>
+          <div class="settings-grid secondary-settings">
+            <label class="field-label" for="qps">每秒请求上限<select id="qps" name="qps"><option value="0.5">0.5 次 / 秒</option><option value="1" selected>1 次 / 秒（初次使用）</option><option value="2">2 次 / 秒</option><option value="5">5 次 / 秒</option><option value="10">10 次 / 秒</option></select><small>按账户允许的 QPS 设置，超过额度可能被限流。</small></label>
+            <label class="field-label" for="custom-terms">始终保留英文的词条<textarea id="custom-terms" name="custom_terms" rows="3" spellcheck="false" placeholder="每行一个，例如：&#10;EEGNet&#10;Nature Neuroscience"></textarea><small>上传后还可以为每篇论文单独增删。</small></label>
+          </div>
+          <div class="settings-actions"><button type="submit" id="save-settings">保存设置</button><button type="button" id="test-connection" class="secondary-button" disabled>测试连接（一次短句）</button><span class="secret-hint">凭据仅保存在本机，留空可保持已保存的凭据。</span></div>
+          <p class="inline-message" id="settings-message" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </details>
+
+    <section class="workspace" aria-labelledby="upload-heading">
+      <div class="section-top"><h2 id="upload-heading">添加一篇论文</h2><span>英文 PDF · 最大 100 MB</span></div>
+      <form id="upload-form">
+        <label class="dropzone" id="dropzone" for="file-input" tabindex="0">
+          <input type="file" id="file-input" name="file" accept=".pdf,application/pdf">
+          <svg class="upload-icon" width="44" height="44" viewBox="0 0 44 44" fill="none" aria-hidden="true"><path d="M26 5H12a3 3 0 0 0-3 3v28a3 3 0 0 0 3 3h20a3 3 0 0 0 3-3V14L26 5Z" stroke="currentColor" stroke-width="1.6"/><path d="M26 5v9h9M22 31V20m0 0-5 5m5-5 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong id="file-title">拖入 PDF，或点击选择文件</strong><span id="file-description">先在本地提取英文专名，核对后再翻译</span>
+        </label>
+        <div class="upload-actions"><span>作者、期刊、模型方法名可保留原文</span><button type="submit" id="upload-button" disabled>上传并提取术语 <span aria-hidden="true">↗</span></button></div>
+        <p class="inline-message" id="upload-message" role="status" aria-live="polite"></p>
+      </form>
+      <div class="info-line"><span aria-hidden="true">ⓘ</span><p>PDF 在本机解析与排版；待译文本发送至百度官方 API。适合含可选文字的论文，纯图片扫描件需先进行 OCR。</p></div>
+    </section>
+
+    <section class="history" aria-labelledby="history-heading">
+      <div class="section-top"><h2 id="history-heading">论文与翻译记录</h2><span id="job-count">自动保存在本机</span></div>
+      <div id="jobs"><div class="empty-state"><strong>从第一篇论文开始</strong><p>上传后会在这里显示术语清单、处理状态和下载文件。</p></div></div>
+      <p id="connection-message" class="connection-message" role="status" aria-live="polite"></p>
+    </section>
+    <footer><span>PDFMathTranslate · BabelDOC · 百度翻译开放平台</span><a href="https://github.com/Strong-liu/chengyi-translation-assistant" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a><span>中文译文在左，英文原文在右</span></footer>
+  </main>
+  <template id="job-template">
+    <article class="job-card">
+      <div class="job-icon" aria-hidden="true">PDF</div>
+      <div class="job-main">
+        <div class="job-header"><h3></h3><span class="status-badge"></span></div>
+        <div class="job-meta"></div><p class="job-message" role="status"></p>
+        <div class="progress-track" hidden><div></div></div>
+        <div class="review-panel" hidden>
+          <div class="review-heading"><span>保留英文的词条</span><span class="term-count"></span></div>
+          <div class="term-groups"></div>
+          <p class="review-help">候选词由本地规则提取，请补充遗漏或删除误识别项。清单内词条将在译文中保留英文，每行一个。</p>
+          <label class="sr-only terms-label">保留英文的术语清单</label><textarea class="terms-editor" rows="6" spellcheck="false"></textarea>
+          <label class="checkbox-label"><input class="preserve-references" type="checkbox" checked><span>参考文献列表整体保留英文</span></label>
+          <p class="configuration-hint" hidden>尚未配置百度 API。可以先核对术语，再到“翻译设置”填写凭据。</p>
+        </div>
+        <div class="job-actions"></div><p class="job-action-message inline-message" role="status"></p>
+      </div>
+    </article>
+  </template>
+</body>
+</html>

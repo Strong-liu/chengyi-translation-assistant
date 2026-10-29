@@ -1,0 +1,7 @@
+# Offline API and translation adapter tests; no API credentials needed.
+requests==2.34.2
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+PyMuPDF==2.0
+httpx==0.28.1

@@ -6,7 +6,7 @@
 
 ## 安装与使用
 
-Windows 安装包发布在 [Releases](https://github.com/Strong-liu/chengyi-translation-assistant/releases)；尚无安装包时，可按下方说明从源码运行。安装版包含 Python、翻译引擎、字体和版面模型；安装后打开桌面上的“橙意翻译助手”，软件会自动打开本机操作页面。
+Windows 安装包发布在 [Releases](https://github.com/Strong-liu/-/releases)；尚无安装包时，可按下方说明从源码运行。安装版包含 Python、翻译引擎、字体和版面模型；安装后打开桌面上的“橙意翻译助手”，软件会自动打开本机操作页面。
 
 1. 在“翻译设置”填写百度翻译 API 凭据。
 2. 上传包含可复制英文文字的 PDF，核对保留英文的术语清单。
@@ -34,6 +34,8 @@ Windows 安装版用当前用户的 DPAPI 加密保存凭据。个人设置、�
 Windows、Python 3.12：
 
 ```powershell
+git clone https://github.com/Strong-liu/-.git chengyi-translation-assistant
+cd chengyi-translation-assistant
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
 .\.venv\Scripts\python.exe packaging\patch_runtime.py .venv\Lib\site-packages

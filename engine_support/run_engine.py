@@ -15,10 +15,12 @@ from pathlib import Path
 
 try:
     from .baidu_academic import BaiduAcademicClient, BaiduConfig
-    from .term_protection import TermProtector, discover_protected_terms, load_policy
+    from .paragraph_preservation import preserve_original_paragraphs
+    from .term_protection import POLICY_VERSION, TermProtector, discover_protected_terms, load_policy
 except ImportError:
     from baidu_academic import BaiduAcademicClient, BaiduConfig
-    from term_protection import TermProtector, discover_protected_terms, load_policy
+    from paragraph_preservation import preserve_original_paragraphs
+    from term_protection import POLICY_VERSION, TermProtector, discover_protected_terms, load_policy
 
 
 def emit(event):
@@ -63,9 +65,20 @@ class ExportErrorCounter(logging.Handler):
 
 
 def load_or_discover_policy(args):
+    reviewed = None
     if args.terms:
-        return load_policy(args.terms)
+        # Old reviewed tasks may contain preserve_references=false. The desktop
+        # product now always retains bibliographies in their original language.
+        reviewed = load_policy(args.terms, preserve_references=True)
+        payload = json.loads(Path(args.terms).read_text(encoding='utf-8-sig'))
+        if isinstance(payload, dict) and payload.get('policy_version') == POLICY_VERSION:
+            return reviewed
+        # Old region rules could freeze body text in a neighbouring PDF column.
+        # Refresh those regions while keeping exactly the reviewed term choices.
     policy = discover_protected_terms(args.input)
+    if reviewed is not None:
+        policy['terms'] = list(reviewed.terms)
+    policy['preserve_references'] = True
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / 'protected_terms.generated.json').write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding='utf-8')
     return TermProtector(policy['terms'], policy['preserve_texts'], policy['preserve_references'])
@@ -88,6 +101,7 @@ async def translate(args, config):
     from pdf2zh_next.translator.base_translator import BaseTranslator
     import pdf2zh_next.high_level as high_level
     from babeldoc.format.pdf.high_level import async_translate
+    from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
 
     args.output.mkdir(parents=True, exist_ok=True)
     cache_dir = Path(os.environ.get('PDFMT_CACHE_DIR', args.output / 'cache'))
@@ -129,19 +143,24 @@ async def translate(args, config):
     logging.getLogger().addHandler(error_counter)
     started = time.monotonic()
     emit({'type': 'backend', 'backend': 'baidu-' + config.service_mode, 'domain': 'academic-style' if config.service_mode == 'llm' else 'academic',
-          'protected_term_count': len(client.protector.terms), 'preserve_references': client.protector.preserve_references})
+          'app_version': '0.3.1', 'protected_term_count': len(client.protector.terms),
+          'preserve_references': client.protector.preserve_references})
     try:
         babel_config = high_level.create_babeldoc_config(settings, args.input)
         finished = False
-        async for event in async_translate(babel_config):
-            kind = event.get('type')
-            if kind == 'error':
-                raise RuntimeError(str(event.get('error', 'PDF 引擎处理失败。')))
-            if kind == 'finish':
-                finished = True
-                break
-            if kind in ('progress_start', 'progress_update', 'progress_end'):
-                emit({key: value for key, value in event.items() if key in ('type', 'stage', 'stage_progress', 'stage_current', 'stage_total', 'overall_progress')})
+        with preserve_original_paragraphs(
+            ILTranslator, babel_config, client.protector,
+            on_preserved=lambda: client._count('preserved_paragraphs'),
+        ):
+            async for event in async_translate(babel_config):
+                kind = event.get('type')
+                if kind == 'error':
+                    raise RuntimeError(str(event.get('error', 'PDF 引擎处理失败。')))
+                if kind == 'finish':
+                    finished = True
+                    break
+                if kind in ('progress_start', 'progress_update', 'progress_end'):
+                    emit({key: value for key, value in event.items() if key in ('type', 'stage', 'stage_progress', 'stage_current', 'stage_total', 'overall_progress')})
         if not finished:
             raise RuntimeError('PDF 引擎未确认处理完成，请查看运行日志。')
         client.raise_if_unavailable()

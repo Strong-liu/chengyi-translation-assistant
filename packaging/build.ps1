@@ -92,7 +92,7 @@ foreach ($file in @('app.py','INSTALLATION_NOTES.txt','LICENSE')) {
 Copy-Tree (Join-Path $ProjectRoot 'static') (Join-Path $taskPayload 'static') @('/XD','__pycache__','/XF','*.pyc')
 $taskSupport = Join-Path $taskPayload 'engine_support'
 New-Item -ItemType Directory -Force -Path $taskSupport | Out-Null
-foreach ($file in @('__init__.py','baidu_academic.py','run_engine.py','term_protection.py','README.md')) {
+foreach ($file in @('__init__.py','baidu_academic.py','run_engine.py','term_protection.py','paragraph_preservation.py','README.md')) {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "engine_support\$file") -Destination (Join-Path $taskSupport $file) -Force
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination $taskPayload -Force

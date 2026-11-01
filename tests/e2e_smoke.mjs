@@ -38,7 +38,7 @@ try {
  await card.locator('.terms-editor').waitFor();
  const terms=await card.locator('.terms-editor').inputValue();assert.ok(terms.includes('EEGNet'));
  for(const term of expected)assert.ok(terms.includes(term),`Missing protected term: ${term}`);
- assert.equal(await card.locator('.preserve-references').isChecked(),true);
+ assert.equal(await card.locator('.preserve-references').textContent(),'参考文献列表自动跳过，整体保留原文。');
  await page.screenshot({path:path.join(output,'review-desktop.png'),fullPage:true});
  await card.getByRole('button',{name:'核对完成，开始翻译',exact:true}).click();
  console.log(JSON.stringify({stage:'translating',job_id:job.id,pages:job.pages,protected_terms:job.terms.length}));

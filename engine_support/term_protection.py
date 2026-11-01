@@ -9,7 +9,7 @@ import statistics
 import unicodedata
 from pathlib import Path
 
-POLICY_VERSION = 'english-preservation-v3'
+POLICY_VERSION = 'english-preservation-v4'
 DEFAULT_TERMS = [
     'EEGNet', 'DeepConvNet', 'ShallowConvNet', 'Compact-CNN', 'CompactCNN',
     'CNN', 'RNN', 'LSTM', 'BiLSTM', 'GRU', 'Transformer', 'SSVEPformer',
@@ -36,6 +36,24 @@ TOKEN_RE = re.compile(r'ZXQPT\d{6}ZXQ', re.IGNORECASE)
 TOKEN_ARTIFACT_RE = re.compile(r'Z\s*X\s*Q\s*P\s*T', re.IGNORECASE)
 FORMULA_RE = re.compile(r'\{\s*v\s*\d+\s*\}|</?style\b[^>]*>', re.IGNORECASE)
 HYPHENS = '\u2010\u2011\u2012\u2013\u2014\u2212'
+REFERENCE_NUMBER_RE = re.compile(r'^\s*(?:\[\s*\d+\s*\]|\d+[.)])\s*')
+AUTHOR_NAME = r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ’'\-]+"
+AUTHOR_INITIAL = r'[A-ZÀ-ÖØ-Þ]\.(?:\s*[-\u2010\u2011]\s*[A-Za-zÀ-ÖØ-öø-ÿ]\.)?'
+AUTHOR_INITIALS = rf'(?:{AUTHOR_INITIAL}\s*){{1,4}}'
+REFERENCE_AUTHOR_RE = re.compile(
+    rf'^(?:{AUTHOR_INITIALS}(?:(?:van|von|de|del|da|di|le|la)\s+)?{AUTHOR_NAME}'
+    rf'|{AUTHOR_NAME},\s*{AUTHOR_INITIALS}'
+    rf'|{AUTHOR_NAME}\s+[A-Z]{{1,4}}(?=\s*[,;.])'
+    rf'|{AUTHOR_NAME}\s+et\s+al\.'
+    rf'|{AUTHOR_NAME}(?:\s+{AUTHOR_NAME}){{1,3}}(?=[,.;])'
+    rf'|{AUTHOR_NAME},\s+{AUTHOR_NAME}(?=[,.;]))'
+)
+PUBLICATION_DETAILS_RE = re.compile(
+    r'doi\s*:|https?://(?:dx\.)?doi\.org/|\barXiv\s*:|\bISBN\b'
+    r'|\b(?:vol\.|pp\.|Art\.\s*no\.)'
+    r'|\b\d+\s*\(\s*\d+\s*\)\s*,\s*\d+'
+    r'|\b\d+\s*,\s*\d+\s*[-–]\s*\d+', re.IGNORECASE
+)
 
 
 class ProtectionError(RuntimeError):
@@ -60,6 +78,31 @@ def term_pattern(term: str) -> str:
         else:
             parts.append(re.escape(character))
     return r'(?<![A-Za-z0-9])' + ''.join(parts) + r'(?![A-Za-z0-9])'
+
+
+def _reference_heading(text: str) -> bool:
+    # Publishers may letter-space headings or number them with Arabic/Roman
+    # section labels. Compare the complete line so a prose mention does not
+    # turn the rest of the manuscript into a bibliography.
+    compact = re.sub(r'\s+', '', unicodedata.normalize('NFKC', text)).strip(':：.')
+    return bool(re.fullmatch(
+        r'(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)\.?)?'
+        r'(?:References?|Bibliography|Literaturecited|参考文献)', compact, re.IGNORECASE))
+
+
+def _reference_entry(text: str) -> bool:
+    text = unicodedata.normalize('NFKC', text).strip()
+    number = REFERENCE_NUMBER_RE.match(text)
+    content = text[number.end():] if number else text
+    # Search for an author at the start of the entry, rather than any later
+    # surname/initial pair in a paragraph that merely cites another paper.
+    if not REFERENCE_AUTHOR_RE.match(content):
+        return False
+    if not re.search(r'\b(?:19|20)\d{2}[a-z]?\b', content):
+        return False
+    # A numbered bibliography item has both the citation label and author
+    # prefix. An unnumbered item needs publication metadata as extra evidence.
+    return bool(number or PUBLICATION_DETAILS_RE.search(content))
 
 
 class TermProtector:
@@ -90,15 +133,10 @@ class TermProtector:
         # blocks as well, without freezing unrelated appendix paragraphs.
         if len(normalized) >= 24 and normalized in self.joined_preserved:
             return True
-        if self.preserve_references and re.match(r'^\s*(?:references|bibliography|参考文献)\s*$', text, re.IGNORECASE):
-            return True
         if self.preserve_references:
             # A bibliography entry remains English in its entirety, including
             # title, authors, journal, year, volume, DOI and citation markers.
-            starts_number = re.match(r'^\s*(?:\[\s*\d{1,3}\s*\]|\d{1,3}\.)\s+', text)
-            has_year = re.search(r'\b(?:19|20)\d{2}\b', text)
-            has_author = re.search(r'\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ\'-]+,\s*(?:[A-Z]\.\s*){1,4}', text)
-            if starts_number and has_year and has_author:
+            if _reference_heading(text) or _reference_entry(text):
                 return True
         return False
 
@@ -153,7 +191,37 @@ def _clean_author_line(line):
 
 
 def _appendix_heading(text):
-    return bool(re.match(r'^\s*(?:Appendi(?:x|ces)\b|Supplement(?:ary|al)\b|[A-Z](?:\.\d+)*\s*\n\s*[A-Z][A-Za-z -]{5,})', text))
+    return bool(re.match(r'^\s*(?:(?i:Appendi(?:x|ces)\b|Supplement(?:ary|al)\b)|[A-Z](?:\.\d+)*\s*\n\s*[A-Z][A-Za-z -]{5,})', text))
+
+
+def _page_reading_lines(page_dict, page_width):
+    """Return text lines in column order without grouping neighbouring columns.
+
+    PyMuPDF can put left and right text in one block at the same Y coordinate.
+    A bibliography boundary must therefore select lines, not whole blocks.
+    Require narrow text on both sides before using two-column reading order;
+    full-width paragraphs keep the ordinary top-to-bottom order.
+    """
+    lines = []
+    for block in page_dict.get('blocks', []):
+        block_lines = block.get('lines', [])
+        block_text = '\n'.join(''.join(span.get('text', '') for span in line.get('spans', []))
+                               for line in block_lines)
+        for index, line in enumerate(block_lines):
+            content = ''.join(span.get('text', '') for span in line.get('spans', [])).strip()
+            if content:
+                appendix = _appendix_heading(content) or (index == 0 and _appendix_heading(block_text))
+                lines.append((line['bbox'], content, appendix))
+    middle = page_width / 2
+    gutter = page_width * .025
+    has_left = any(box[2] <= middle + gutter and len(content) >= 24 for box, content, _ in lines)
+    has_right = any(box[0] >= middle - gutter and len(content) >= 24 for box, content, _ in lines)
+    two_columns = has_left and has_right
+    ordered = []
+    for box, content, appendix in lines:
+        column = int(two_columns and box[0] >= middle - gutter)
+        ordered.append(((column, box[1]), content, appendix))
+    return sorted(ordered, key=lambda item: item[0])
 
 
 def discover_protected_terms(pdf_path, custom_terms=None):
@@ -196,42 +264,34 @@ def discover_protected_terms(pdf_path, custom_terms=None):
                     for line in item.get('lines', []))
             text = page.get_text()
             full_text.append(text)
-            reference_y = None
-            reference_end_y = None
-            if in_references:
-                for block in blocks:
-                    if _appendix_heading(block[4]):
-                        reference_end_y = block[1]
-                        break
-            for line in page_dict.get('blocks', []):
-                for item in line.get('lines', []):
-                    content = ''.join(span.get('text', '') for span in item.get('spans', []))
-                    # A table column named "References" near the beginning of
-                    # a survey is not the bibliography section heading.
-                    # Many conference papers put a long appendix after their
-                    # bibliography. The bibliography need not be in the latter
-                    # half of the complete PDF. Require bibliographic content
-                    # after early headings instead of assuming document order.
+            reading_lines = _page_reading_lines(page_dict, page.rect.width)
+            reference_start = (0, float('-inf')) if in_references else None
+            if not in_references:
+                for position, content, _ in reading_lines:
+                    # Do not treat an early survey table's References column
+                    # as a section heading. Bibliographies may precede appendices.
+                    if not _reference_heading(content):
+                        continue
                     following = text[text.find(content) + len(content):]
                     bibliography_context = (len(re.findall(r'\b(?:19|20)\d{2}\b', following[:5000])) >= 2
                                             and re.search(r'doi\s*:|https?://|Journal|Proceedings|\bvol\.', following[:5000], re.I))
                     eligible_page = (len(document) <= 4 or page_number >= len(document) * .5
                                      or (page_number >= 2 and bibliography_context))
-                    if eligible_page and re.fullmatch(r'\s*(?:(?:\d+\.)?\s*)?(References?|Bibliography|Literature cited|参考文献)\s*', content, re.IGNORECASE):
-                        reference_y = item['bbox'][1]
-            if reference_y is not None:
-                in_references = True
+                    if eligible_page:
+                        reference_start = position
+                        in_references = True
+                        break
             if in_references:
-                reference_pages.append(page_number + 1)
-                for block in blocks:
-                    if ((reference_y is None or block[1] >= reference_y - 2)
-                            and (reference_end_y is None or block[1] < reference_end_y - 2)):
-                        preserved.append(block[4])
-                        reference_texts.append(block[4])
-                if reference_end_y is not None:
+                reference_end = next((position for position, _, appendix in reading_lines
+                                      if position > reference_start and appendix), None)
+                selected = [content for position, content, _ in reading_lines
+                            if position >= reference_start and (reference_end is None or position < reference_end)]
+                if selected:
+                    reference_pages.append(page_number + 1)
+                    preserved.extend(selected)
+                    reference_texts.extend(selected)
+                if reference_end is not None:
                     in_references = False
-                    if reference_end_y <= min((block[1] for block in blocks), default=0) + 2:
-                        reference_pages.pop()
             if page_number < 2:
                 # Journal mastheads normally occupy the top quarter of page 1.
                 for block in blocks:
@@ -298,12 +358,14 @@ def discover_protected_terms(pdf_path, custom_terms=None):
     }
 
 
-def load_policy(path=None):
+def load_policy(path=None, *, preserve_references=None):
     if not path:
-        return TermProtector()
+        return TermProtector(preserve_references=True if preserve_references is None else preserve_references)
     payload = json.loads(Path(path).read_text(encoding='utf-8-sig'))
     if isinstance(payload, list):
         payload = {'terms': payload}
+    if preserve_references is not None:
+        payload['preserve_references'] = preserve_references
     texts = payload.get('preserve_texts', [])
     if not payload.get('preserve_references', True):
         reference_texts = set(payload.get('reference_preserve_texts', []))

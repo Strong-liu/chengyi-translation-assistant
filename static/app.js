@@ -185,7 +185,6 @@ function createCard(job) {
     const count=element.querySelector('.term-count');
     const updateCount=()=>{count.textContent=`${termsFrom(editor.value).length} 个词条`;};
     editor.addEventListener('input',updateCount);updateCount();
-    element.querySelector('.preserve-references').checked=job.preserve_references!==false;
     const groupNames={authors:'作者',journals:'期刊',methods:'模型方法',custom:'自定义'};
     for(const [group,name] of Object.entries(groupNames)) {
       const items=job.term_groups?.[group] || (group==='methods'?job.term_groups?.models_methods:undefined);
@@ -200,7 +199,7 @@ function createCard(job) {
       if(!ui.configured) {openSettings();return;}
       card.pending=true;updateCard(card,card.job);
       try {
-        await jsonRequest(`/api/jobs/${job.id}/start`,'POST',{terms:termsFrom(editor.value),preserve_references:element.querySelector('.preserve-references').checked});
+        await jsonRequest(`/api/jobs/${job.id}/start`,'POST',{terms:termsFrom(editor.value),preserve_references:true});
         await refresh();
       } catch(error) {showMessage(element.querySelector('.job-action-message'),error.message,true);}
       finally {card.pending=false;updateCard(card,card.job);}

@@ -7,6 +7,16 @@ python -m unittest discover -s engine_support -p "test_*.py"
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+## 可选完整引擎离线测试
+
+已安装完整运行依赖并下载 BabelDOC 资源时，可验证真实 PDF 解析、翻译调度和排版流程。此测试使用合成 PDF 与模拟百度接口，不读取个人凭据，不调用真实翻译服务。
+
+```powershell
+python tests/engine_reference_smoke.py --assets packaging/deps/babeldoc
+```
+
+测试包含带编号和字间空格的参考文献标题、IEEE 格式文献、跨页文献及附录；验证所有文献原文保留、正文和附录仍进入翻译、旧任务关闭参考文献保护时也会自动跳过。结果写入 `build/engine-reference-smoke/`。
+
 ## 可选在线浏览器测试
 
 此测试需要已启动的应用，以及该应用本机已配置的百度大模型翻译 Key。测试会调用真实百度服务，可能计入账户额度。

@@ -332,14 +332,14 @@ class BaiduAcademicClient:
                 # Some LLMs infer that a placeholder represents a grammatical
                 # word (e.g. a user-protected "do") and legitimately omit it
                 # in Chinese. More retries cannot guarantee recovery. In this
-                # bounded fallback the service never receives a placeholder:
+                # fallback the service never receives a placeholder:
                 # only unprotected spans are translated, and every protected
                 # token is inserted locally in its exact source position.
+                # Process every span rather than rejecting dense terminology;
+                # each request still uses the shared rate limiter and normal
+                # API validation/error handling.
                 spans = TOKEN_RE.split(chunk)
                 markers = TOKEN_RE.findall(chunk)
-                translatable = [span for span in spans if re.search(r'[A-Za-z]', span)]
-                if len(translatable) > 40:
-                    raise ProtectionError('本段需恢复的术语片段过多，请减少误选术语后重试。')
                 result = []
                 for index, span in enumerate(spans):
                     if re.search(r'[A-Za-z]', span):

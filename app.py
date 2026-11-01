@@ -248,8 +248,10 @@ class Manager:
             if job['status'] not in ('review', 'failed'):
                 raise HTTPException(409, '此任务已经开始或完成。')
             policy = job['policy'].copy()
-            policy.update(terms=clean_terms(values.terms), preserve_references=values.preserve_references)
-            self.update(identifier, terms=policy['terms'], policy=policy, preserve_references=values.preserve_references,
+            # References always stay in the original language, including when
+            # an older client or saved task still submits the former opt-out.
+            policy.update(terms=clean_terms(values.terms), preserve_references=True)
+            self.update(identifier, terms=policy['terms'], policy=policy, preserve_references=True,
                         status='queued', phase='queued', message='已加入队列，等待处理。', started_at=None, finished_at=None)
             self.executor.submit(self.run, identifier)
             return self.public(job)
@@ -380,7 +382,7 @@ def home():
 def health():
     with manager.lock:
         active_jobs = sum(item['status'] in ('running', 'queued') for item in manager.items.values())
-    return {'app': APP_ID, 'version': '0.3.0', 'product': '橙意翻译助手', 'service': settings.public()['service'],
+    return {'app': APP_ID, 'version': '0.3.1', 'product': '橙意翻译助手', 'service': settings.public()['service'],
             'ready': BOOTSTRAP.is_file() and PYTHON.is_file(), 'active_jobs': active_jobs}
 
 

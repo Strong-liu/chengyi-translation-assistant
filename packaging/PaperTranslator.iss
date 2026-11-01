@@ -4,7 +4,7 @@
 #ifndef OutputDir
   #define OutputDir "..\dist"
 #endif
-#define ProductVersion "0.3.0"
+#define ProductVersion "0.3.1"
 #if FileExists(PayloadDir + "\assets\branding\app.ico")
   #define ShortcutIcon "{app}\assets\branding\app.ico"
 #else

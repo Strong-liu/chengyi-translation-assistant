@@ -99,6 +99,17 @@ class DesktopAPITests(unittest.TestCase):
         self.assertEqual(saved['policy']['terms'], ['CustomNet', 'Pan'])
         self.assertNotIn('offline-only-key', json.dumps(saved))
 
+    def test_legacy_opt_out_cannot_send_references_for_translation(self):
+        self.client.put('/api/settings', json={'api_key': 'offline-only-key', 'service_mode': 'llm'})
+        job = self.upload_fixture()
+        application.manager.items[job['id']]['policy']['preserve_references'] = False
+        with patch.object(application.manager.executor, 'submit'):
+            result = self.client.post(f'/api/jobs/{job["id"]}/start',
+                                     json={'terms': job['terms'], 'preserve_references': False})
+        self.assertEqual(result.status_code, 202, result.text)
+        self.assertTrue(result.json()['preserve_references'])
+        self.assertTrue(application.manager.items[job['id']]['policy']['preserve_references'])
+
     def test_missing_key_connection_test_does_not_call_process(self):
         with patch.object(application.subprocess, 'run') as run:
             response = self.client.post('/api/service/test')

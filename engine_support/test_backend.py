@@ -99,6 +99,63 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(client.translate('John Smith, Jane Doe'), 'John Smith, Jane Doe')
         self.assertEqual(fake.calls, [])
 
+    def test_initials_first_and_surname_first_references_are_not_sent(self):
+        entries = [
+            '[1] S. M. Smith, "A technical review," IEEE Trans. Example, vol. 8, pp. 12-20, 2020.',
+            '[2]W.-S. Smith and A. Doe, "A technical method," Proc. Example Conf., 2021, pp. 1-5.',
+            '1001. Smith, J.; Doe, A. A model. J. Example 2022, 15, 056013.',
+            '[1002] J. van Smith, "A technical book," Example Press, 2019.',
+            '1003) Smith J, Doe A. A technical study. Journal 2023; 12:100-110.',
+        ]
+        fake = FakeSession()
+        client = self.client(fake, TermProtector(['ExampleNet']))
+        for text in entries:
+            with self.subTest(text=text):
+                self.assertEqual(client.translate(text), text)
+        self.assertEqual(fake.calls, [])
+
+    def test_long_merged_bibliography_is_preserved_before_masking(self):
+        text = ' '.join(
+            f'[{index}] A. Smith and J. Doe, "A model {index}," IEEE Example, vol. 9, pp. 1-5, 2020.'
+            for index in range(1, 61)
+        )
+        fake = FakeSession()
+        client = self.client(fake, TermProtector(['Smith', 'Doe', 'IEEE Example']))
+        self.assertEqual(client.translate(text), text)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(client.stats['preserved_paragraphs'], 1)
+
+    def test_unnumbered_reference_needs_author_and_publication_details(self):
+        protector = TermProtector()
+        for text in (
+            'J. Smith and A. Doe, "A technical study," IEEE Example, vol. 4, pp. 1-8, 2020.',
+            'Smith, J. (2021). A technical study. Example Methods, 12(3), 100-110.',
+            'Smith J, Doe A. A model. doi: 10.1234/example. 2022.',
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(protector.should_preserve(text))
+        self.assertFalse(protector.should_preserve('J. Smith demonstrated the benefits of this approach in 2020.'))
+
+    def test_reference_titles_include_numbered_and_letter_spaced_headings(self):
+        protector = TermProtector()
+        for heading in ('R E F E R E N C E S', 'VII. REFERENCES', '7. References',
+                        '7.1 Bibliography', 'L I T E R A T U R E  C I T E D', 'References:'):
+            with self.subTest(heading=heading):
+                self.assertTrue(protector.should_preserve(heading))
+        self.assertFalse(TermProtector(preserve_references=False).should_preserve('VII. REFERENCES'))
+
+    def test_citations_in_prose_captions_and_appendices_are_translatable(self):
+        protector = TermProtector()
+        for text in (
+            '[1] This paragraph compares Smith, J. with other authors in 2020.',
+            '[2] The model introduced in 2021 is described in IEEE Example.',
+            'Fig. 1. S. M. Smith introduced the baseline in 2020.',
+            'Appendix A. Additional analysis of the 2020 model.',
+            'References to earlier work are discussed in Section 2.',
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(protector.should_preserve(text))
+
     def test_failed_protection_does_not_write_cache(self):
         fake = FakeSession(lambda text: TOKEN_RE.sub('', text))
         client = self.client(fake, TermProtector(['EEGNet']))
@@ -106,6 +163,51 @@ class BackendTests(unittest.TestCase):
             client.translate('The EEGNet model performs well.')
         self.assertEqual(client.cache.connection.execute('SELECT count(*) FROM translations').fetchone()[0], 0)
         self.assertEqual(client.errors, ['ProtectionError'])
+
+    def test_author_led_body_with_conference_and_year_is_translatable(self):
+        text = 'J. Smith introduced the baseline at IEEE ICASSP in 2020, and our method improves it.'
+        self.assertFalse(TermProtector().should_preserve(text))
+
+    def test_right_column_references_do_not_freeze_lower_left_column_body(self):
+        import pymupdf
+        body = 'Left column body remains translatable.'
+        reference = '[1] J. Smith, A study. Journal 2020, vol. 4, pp. 1-5.'
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'right-reference.pdf'
+            with pymupdf.open() as document:
+                page = document.new_page()
+                page.insert_text((50, 200), 'An earlier left column paragraph.', fontsize=8)
+                page.insert_text((50, 350), body, fontsize=8)
+                page.insert_text((330, 300), 'REFERENCES', fontsize=10)
+                page.insert_text((330, 350), reference, fontsize=7)
+                document.save(path)
+            report = discover_protected_terms(path)
+            protected = TermProtector(report['terms'], report['preserve_texts'])
+            self.assertFalse(protected.should_preserve(body))
+            self.assertTrue(protected.should_preserve(reference))
+
+    def test_left_column_reference_start_keeps_upper_right_continuation_and_stops_at_appendix(self):
+        import pymupdf
+        continuation = 'Continuation title with publication details in 2021.'
+        appendix = 'This right column appendix remains translatable.'
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'left-reference.pdf'
+            with pymupdf.open() as document:
+                page = document.new_page()
+                page.insert_text((50, 200), 'Ordinary left column body paragraph.', fontsize=8)
+                page.insert_text((50, 500), 'REFERENCES', fontsize=10)
+                page.insert_text((50, 540), '[1] J. Smith, A study. Journal 2020, vol. 4.', fontsize=7)
+                page.insert_text((330, 150), continuation, fontsize=7)
+                page.insert_text((330, 300), 'APPENDIX A', fontsize=10)
+                page.insert_text((330, 350), appendix, fontsize=7)
+                page = document.new_page()
+                page.insert_text((50, 200), 'The following page continues the appendix.')
+                document.save(path)
+            report = discover_protected_terms(path)
+            protected = TermProtector(report['terms'], report['preserve_texts'])
+            self.assertTrue(protected.should_preserve(continuation))
+            self.assertFalse(protected.should_preserve(appendix))
+            self.assertFalse(protected.should_preserve('The following page continues the appendix.'))
 
     def test_retries_rate_limit_then_returns_academic_result(self):
         fake = FakeSession(responses=[{'error_code': '54003'}, {'trans_result': [{'dst':'这是一项研究。'}]}])
@@ -229,6 +331,60 @@ class BackendTests(unittest.TestCase):
             policy['preserve_references'] = False
             policy_path.write_text(json.dumps(policy), encoding='utf-8')
             self.assertFalse(load_policy(policy_path).should_preserve('John Smith. A model. Journal 2020. doi: 10.1234/example1'))
+
+    def test_discovery_finds_letter_spaced_numbered_reference_heading(self):
+        import pymupdf
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'synthetic.pdf'
+            with pymupdf.open() as document:
+                page = document.new_page()
+                page.insert_text((50, 90), 'This is regular manuscript prose.')
+                page.insert_text((50, 300), 'VII. R E F E R E N C E S')
+                page.insert_text((50, 340), '[1] J. Smith, A model. Journal 2020, vol. 4, pp. 1-5.')
+                page = document.new_page()
+                page.insert_text((50, 90), 'Appendix A')
+                page.insert_text((50, 150), 'This appendix explains the detailed analysis.')
+                document.save(path)
+            policy = discover_protected_terms(path)
+            self.assertEqual(policy['reference_pages'], [1])
+            self.assertTrue(any('J. Smith' in block for block in policy['reference_preserve_texts']))
+            protector = TermProtector(policy['terms'], policy['preserve_texts'])
+            self.assertFalse(protector.should_preserve('This is regular manuscript prose.'))
+            self.assertFalse(protector.should_preserve('This appendix explains the detailed analysis.'))
+
+    def test_policy_reference_override_preserves_old_disabled_task_blocks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'policy.json'
+            reference = 'An organization. A technical report. Journal 2020.'
+            author = 'Jane Doe and John Smith'
+            path.write_text(json.dumps({
+                'terms': ['ExampleNet'], 'preserve_references': False,
+                'preserve_texts': [author, reference], 'reference_preserve_texts': [reference],
+            }), encoding='utf-8')
+            self.assertFalse(load_policy(path).should_preserve(reference))
+            overridden = load_policy(path, preserve_references=True)
+            self.assertTrue(overridden.preserve_references)
+            self.assertTrue(overridden.should_preserve(reference))
+            self.assertTrue(overridden.should_preserve(author))
+            self.assertFalse(load_policy(preserve_references=False).preserve_references)
+
+    def test_discovery_keeps_same_page_appendix_translatable(self):
+        import pymupdf
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'synthetic.pdf'
+            with pymupdf.open() as document:
+                page = document.new_page()
+                page.insert_text((50, 90), 'This is regular manuscript prose.')
+                page.insert_text((50, 300), '4. R E F E R E N C E S')
+                page.insert_text((50, 340), '[1] J. Smith, A model. Journal 2020, vol. 4, pp. 1-5.')
+                page.insert_text((50, 450), 'APPENDIX A')
+                page.insert_text((50, 500), 'This appendix explains the detailed analysis.')
+                document.save(path)
+            policy = discover_protected_terms(path)
+            self.assertEqual(policy['reference_pages'], [1])
+            self.assertFalse(any('appendix' in block.lower() for block in policy['reference_preserve_texts']))
+            protector = TermProtector(policy['terms'], policy['preserve_texts'])
+            self.assertFalse(protector.should_preserve('This appendix explains the detailed analysis.'))
 
     def test_translation_failures_are_not_double_counted_as_export_failures(self):
         import logging
